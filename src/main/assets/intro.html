@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<style>
+  html, body { margin: 0; width: 100%; height: 100%; background: #000; overflow: hidden; }
+
+  /* Pantalla CRT */
+  #crt { position: fixed; inset: 0; overflow: hidden; background: #000; }
+
+  /* Fondo de la señal: rayos retro */
+  #fondo {
+    position: absolute; inset: -50%; opacity: 0;
+    background:
+      radial-gradient(circle at center, rgba(244,214,40,.35) 0%, rgba(244,214,40,.08) 30%, transparent 55%),
+      repeating-conic-gradient(from 0deg at 50% 50%, rgba(244,214,40,.10) 0deg 7.5deg, transparent 7.5deg 15deg),
+      #1c1a18;
+    animation: fondoIn .6s ease-out 1.25s forwards, girar 30s linear infinite;
+  }
+
+  /* Estática */
+  #ruido {
+    position: absolute; inset: 0; width: 100%; height: 100%;
+    image-rendering: pixelated; opacity: 0;
+    animation: ruido 2.6s linear .35s forwards;
+  }
+
+  /* Logo */
+  #logo {
+    position: absolute; left: 50%; top: 50%;
+    width: min(76vw, 108vh); transform: translate(-50%, -50%);
+    opacity: 0; filter: drop-shadow(0 0 18px rgba(244,214,40,.25));
+    animation: logoIn 2.4s steps(1, end) 1.3s forwards, temblor .12s infinite 1.3s;
+  }
+  #logoR, #logoB { position: absolute; left: 50%; top: 50%; width: min(76vw, 108vh); opacity: 0;
+    mix-blend-mode: screen; transform: translate(-50%, -50%); }
+  #logoR { filter: sepia(1) saturate(8) hue-rotate(-50deg); animation: fantasma 1.6s ease-out 1.3s forwards; }
+  #logoB { filter: sepia(1) saturate(8) hue-rotate(170deg); animation: fantasma2 1.6s ease-out 1.3s forwards; }
+
+  /* Líneas de barrido y viñeta */
+  #lineas {
+    position: absolute; inset: 0; pointer-events: none;
+    background: repeating-linear-gradient(to bottom, rgba(0,0,0,.28) 0 2px, transparent 2px 4px);
+  }
+  #banda {
+    position: absolute; left: 0; right: 0; height: 22%; top: -25%;
+    background: linear-gradient(to bottom, transparent, rgba(255,255,255,.07), transparent);
+    animation: banda 2.2s linear .5s infinite;
+  }
+  #vineta {
+    position: absolute; inset: 0; pointer-events: none;
+    box-shadow: inset 0 0 18vmin 4vmin rgba(0,0,0,.95);
+    border-radius: 4vmin;
+  }
+
+  /* Encendido: punto → línea → pantalla */
+  #haz {
+    position: absolute; left: 50%; top: 50%; width: 100%; height: 100%;
+    background: #fff; transform: translate(-50%, -50%) scale(0, .004);
+    animation: encender .45s cubic-bezier(.2,.8,.2,1) forwards;
+    box-shadow: 0 0 40px 10px #fff;
+  }
+
+  /* Indicador OSD estilo VHS */
+  .osd {
+    position: absolute; font: 700 clamp(18px, 4.6vmin, 44px)/1 "Courier New", monospace;
+    color: #6dff6d; text-shadow: 0 0 6px rgba(109,255,109,.8), 2px 0 rgba(255,0,0,.4);
+    letter-spacing: .08em; opacity: 0; animation: aparecer .01s linear .55s forwards;
+  }
+  #canal { top: 7vmin; left: 8vmin; }
+  #play  { bottom: 7vmin; right: 8vmin; animation: aparecer .01s linear 1.6s forwards, parpadeo 1s steps(2) 1.6s infinite; }
+
+  #todo { position: absolute; inset: 0; animation: apagarFlash .2s linear 3.75s forwards; }
+
+  @keyframes encender {
+    0%   { transform: translate(-50%,-50%) scale(0, .004); opacity: 1; }
+    45%  { transform: translate(-50%,-50%) scale(1, .004); opacity: 1; }
+    80%  { transform: translate(-50%,-50%) scale(1, 1);    opacity: .9; }
+    100% { transform: translate(-50%,-50%) scale(1, 1);    opacity: 0; }
+  }
+  @keyframes ruido   { 0% {opacity:.95} 35% {opacity:.9} 50% {opacity:.35} 100% {opacity:.12} }
+  @keyframes fondoIn { to { opacity: 1; } }
+  @keyframes girar   { to { transform: rotate(360deg); } }
+  @keyframes logoIn  {
+    0% {opacity:.0} 6% {opacity:.8} 9% {opacity:.1} 14% {opacity:1} 17% {opacity:.4} 22% {opacity:1} 100% {opacity:1}
+  }
+  @keyframes temblor {
+    0% { transform: translate(-50%,-50%); } 50% { transform: translate(calc(-50% + 1px), calc(-50% - 1px)); }
+    100% { transform: translate(-50%,-50%); }
+  }
+  @keyframes fantasma  { 0% {opacity:.0} 10% {opacity:.55; transform: translate(calc(-50% - 14px),-50%)} 100% {opacity:0; transform: translate(-50%,-50%)} }
+  @keyframes fantasma2 { 0% {opacity:.0} 10% {opacity:.55; transform: translate(calc(-50% + 14px),-50%)} 100% {opacity:0; transform: translate(-50%,-50%)} }
+  @keyframes banda   { to { top: 105%; } }
+  @keyframes aparecer { to { opacity: 1; } }
+  @keyframes parpadeo { 50% { opacity: 0; } }
+  @keyframes apagarFlash { 0% { filter: brightness(1); } 50% { filter: brightness(1.8); } 100% { filter: brightness(1); } }
+</style>
+</head>
+<body>
+<div id="crt">
+  <div id="todo">
+    <div id="fondo"></div>
+    <canvas id="ruido" width="200" height="120"></canvas>
+    <img id="logoR" src="logo.png" alt="">
+    <img id="logoB" src="logo.png" alt="">
+    <img id="logo" src="logo.png" alt="Radio Recuerdos Retro">
+    <div id="banda"></div>
+    <div id="lineas"></div>
+    <div class="osd" id="canal">CANAL 03</div>
+    <div class="osd" id="play">&#9654; EN VIVO</div>
+  </div>
+  <div id="vineta"></div>
+  <div id="haz"></div>
+</div>
+
+<script>
+  // Estática animada
+  (function () {
+    var c = document.getElementById('ruido'), x = c.getContext('2d');
+    var img = x.createImageData(c.width, c.height), d = img.data, fin = Date.now() + 4200;
+    function cuadro() {
+      for (var i = 0; i < d.length; i += 4) {
+        var v = (Math.random() * 255) | 0;
+        d[i] = d[i + 1] = d[i + 2] = v; d[i + 3] = 255;
+      }
+      x.putImageData(img, 0, 0);
+      if (Date.now() < fin) requestAnimationFrame(cuadro);
+    }
+    cuadro();
+  })();
+
+  // Sonido de encendido + estática (suave)
+  (function () {
+    try {
+      var A = window.AudioContext || window.webkitAudioContext; if (!A) return;
+      var ctx = new A(), t = ctx.currentTime + 0.05;
+      // "clac" de encendido
+      var o = ctx.createOscillator(), go = ctx.createGain();
+      o.type = 'square'; o.frequency.setValueAtTime(90, t); o.frequency.exponentialRampToValueAtTime(40, t + .12);
+      go.gain.setValueAtTime(.18, t); go.gain.exponentialRampToValueAtTime(.001, t + .15);
+      o.connect(go).connect(ctx.destination); o.start(t); o.stop(t + .16);
+      // zumbido agudo de CRT
+      var h = ctx.createOscillator(), gh = ctx.createGain();
+      h.frequency.value = 15600; gh.gain.setValueAtTime(.0, t); gh.gain.linearRampToValueAtTime(.015, t + .3);
+      gh.gain.linearRampToValueAtTime(0, t + 3.6); h.connect(gh).connect(ctx.destination); h.start(t); h.stop(t + 3.7);
+      // estática
+      var len = ctx.sampleRate * 2.6, buf = ctx.createBuffer(1, len, ctx.sampleRate), ch = buf.getChannelData(0);
+      for (var i = 0; i < len; i++) ch[i] = Math.random() * 2 - 1;
+      var n = ctx.createBufferSource(), f = ctx.createBiquadFilter(), gn = ctx.createGain();
+      n.buffer = buf; f.type = 'bandpass'; f.frequency.value = 3000; f.Q.value = .6;
+      gn.gain.setValueAtTime(0, t + .3); gn.gain.linearRampToValueAtTime(.22, t + .4);
+      gn.gain.linearRampToValueAtTime(.12, t + 1.3); gn.gain.linearRampToValueAtTime(0, t + 2.6);
+      n.connect(f).connect(gn).connect(ctx.destination); n.start(t + .3);
+    } catch (e) {}
+  })();
+
+  // Avisa a la app que la intro terminó
+  setTimeout(function () { try { Intro.done(); } catch (e) {} }, 4100);
+</script>
+</body>
+</html>
