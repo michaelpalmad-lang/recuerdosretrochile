@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Cambia aquí el nombre que aparece bajo el ícono -->
+    <string name="app_name">Recuerdos Retro Chile</string>
+</resources>
