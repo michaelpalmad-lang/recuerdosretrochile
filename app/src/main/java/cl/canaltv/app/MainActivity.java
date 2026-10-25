@@ -3,7 +3,16 @@ package cl.canaltv.app;
 import android.Manifest;
 import android.annotation.SuppressLint;
 import android.app.Activity;
+import android.app.PendingIntent;
+import android.app.PictureInPictureParams;
+import android.app.RemoteAction;
 import android.app.UiModeManager;
+import android.graphics.drawable.Icon;
+import android.os.PowerManager;
+import android.util.Rational;
+import android.content.BroadcastReceiver;
+import android.content.Context;
+import android.content.IntentFilter;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.content.res.Configuration;
@@ -26,6 +35,7 @@ import android.widget.FrameLayout;
 
 import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
+import java.util.ArrayList;
 
 public class MainActivity extends Activity {
 
@@ -43,6 +53,49 @@ public class MainActivity extends Activity {
 
     private boolean esTV;
     private boolean cargado = false;
+    private boolean pausado = false;
+    private boolean servicioIniciado = false;
+    private boolean enPip = false;
+    private boolean detenido = false;
+
+    /** Recibe Pausar/Reanudar y Cerrar desde la notificación y la pantalla de bloqueo. */
+    private final BroadcastReceiver controles = new BroadcastReceiver() {
+        @Override
+        public void onReceive(Context c, Intent i) {
+            if (PlaybackService.ACCION_TOGGLE.equals(i.getAction())) setPausado(!pausado);
+            else if (PlaybackService.ACCION_CERRAR.equals(i.getAction())) finish();
+        }
+    };
+
+    /** WebView que en el celular nunca se entera de que la app pasó a segundo plano. */
+    static final class FondoWebView extends WebView {
+        boolean mantenerVisible = false;
+        FondoWebView(Context c) { super(c); }
+        @Override
+        protected void onWindowVisibilityChanged(int visibility) {
+            super.onWindowVisibilityChanged(mantenerVisible ? View.VISIBLE : visibility);
+        }
+    }
+
+    /** En la ventana flotante: oculta controles del reproductor y deja solo el video. */
+    private static final String PIP_JS =
+        "(function(on){function ap(doc){try{var st=doc.getElementById('__pipcss');" +
+        " if(on&&!st){st=doc.createElement('style');st.id='__pipcss';" +
+        " st.textContent='.vjs-control-bar,.vjs-big-play-button,.vjs-loading-spinner,.jw-controls,.jw-display,.plyr__controls,.plyr__control--overlaid,.media-control,[class*=control-bar],[class*=controlbar]{display:none!important}" +
+        "video::-webkit-media-controls{display:none!important}video{object-fit:contain!important}';" +
+        " (doc.head||doc.documentElement).appendChild(st);}" +
+        " if(!on&&st)st.remove();" +
+        " [].forEach.call(doc.querySelectorAll('iframe'),function(f){try{if(f.contentDocument)ap(f.contentDocument);}catch(e){}});" +
+        "}catch(e){}} ap(document);})";
+
+    /** Hace creer al reproductor que la página siempre está visible (no se pausa al minimizar). */
+    private static final String VISIBLE_JS =
+        "(function(){function kv(doc){try{var w=doc.defaultView;if(!w||w.__kv)return;w.__kv=true;" +
+        " var d=function(n,v){try{Object.defineProperty(doc,n,{get:function(){return v},configurable:true});}catch(e){}};" +
+        " d('hidden',false);d('webkitHidden',false);d('visibilityState','visible');d('webkitVisibilityState','visible');" +
+        " ['visibilitychange','webkitvisibilitychange','pagehide','freeze','blur'].forEach(function(n){" +
+        "  w.addEventListener(n,function(e){if(e.target===w||e.target===doc){e.stopImmediatePropagation();}},true);});" +
+        " }catch(e){}} window.__kvApply=kv; kv(document);})();";
 
     /** Mantiene el video reproduciéndose y recarga si la señal se congela. */
     private static final String WATCHDOG_JS =
@@ -50,7 +103,7 @@ public class MainActivity extends Activity {
         " if(window.__wd) return; window.__wd=true; window.__userPaused=false;" +
         " var last=-1, stuck=0, ticks=0;" +
         // busca videos en la página y en todos los iframes accesibles (recursivo)
-        " function collect(doc,l,blocked){ try{" +
+        " function collect(doc,l,blocked){ try{ if(window.__kvApply) window.__kvApply(doc);" +
         "   [].push.apply(l,[].slice.call(doc.querySelectorAll('video')));" +
         "   [].forEach.call(doc.querySelectorAll('iframe'),function(f){" +
         "     try{ if(f.contentDocument) collect(f.contentDocument,l,blocked); else blocked.push(f);}" +
@@ -66,6 +119,8 @@ public class MainActivity extends Activity {
         "   if(window.jwplayer){ try{ jwplayer().setMute(false); jwplayer().setVolume(100);}catch(e){} }" +
         "   if(window.videojs){ try{ for(var k in videojs.getPlayers()){var p=videojs.getPlayers()[k]; if(p){p.muted(false); p.volume(1);}} }catch(e){} }" +
         "  }catch(e){} }" +
+        " window.__setPaused=function(p){ window.__userPaused=p; var v=vids().v[0]; if(!v) return;" +
+        "  if(p){ v.pause(); } else { var r=v.play(); if(r&&r.catch) r.catch(function(){}); unmute(v); } };" +
         " window.__toggle=function(){var v=vids().v[0]; if(!v) return;" +
         "  if(v.paused){window.__userPaused=false; v.play(); unmute(v);} else {window.__userPaused=true; v.pause();}};" +
         " setInterval(function(){ ticks++; var r=vids(), v=r.v[0];" +
@@ -91,7 +146,9 @@ public class MainActivity extends Activity {
 
         root = new FrameLayout(this);
         root.setBackgroundColor(Color.BLACK);
-        web = new WebView(this);
+        FondoWebView fw = new FondoWebView(this);
+        fw.mantenerVisible = !esTV;
+        web = fw;
         web.setBackgroundColor(Color.BLACK);
         root.addView(web, new FrameLayout.LayoutParams(-1, -1));
         setContentView(root);
@@ -106,7 +163,79 @@ public class MainActivity extends Activity {
                     && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
                 requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, 1);
             }
-            iniciarServicio();
+            IntentFilter f = new IntentFilter();
+            f.addAction(PlaybackService.ACCION_TOGGLE);
+            f.addAction(PlaybackService.ACCION_CERRAR);
+            if (Build.VERSION.SDK_INT >= 33) registerReceiver(controles, f, Context.RECEIVER_NOT_EXPORTED);
+            else registerReceiver(controles, f);
+            actualizarServicio();
+            actualizarPip();
+        }
+    }
+
+    private void setPausado(boolean p) {
+        pausado = p;
+        if (web != null) web.evaluateJavascript("window.__setPaused&&window.__setPaused(" + p + ")", null);
+        actualizarServicio();
+        actualizarPip();
+    }
+
+    // ---------- Ventana flotante (Picture-in-Picture), solo celular ----------
+
+    private boolean pipDisponible() {
+        return !esTV && Build.VERSION.SDK_INT >= 26
+                && getPackageManager().hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE);
+    }
+
+    @SuppressLint("NewApi")
+    private PictureInPictureParams parametrosPip() {
+        int f = PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE;
+        PendingIntent piToggle = PendingIntent.getBroadcast(this, 10,
+                new Intent(PlaybackService.ACCION_TOGGLE).setPackage(getPackageName()), f);
+        ArrayList<RemoteAction> acciones = new ArrayList<>();
+        acciones.add(new RemoteAction(
+                Icon.createWithResource(this, pausado ? android.R.drawable.ic_media_play : android.R.drawable.ic_media_pause),
+                pausado ? "Reanudar" : "Pausar", pausado ? "Reanudar" : "Pausar", piToggle));
+        PictureInPictureParams.Builder b = new PictureInPictureParams.Builder()
+                .setAspectRatio(new Rational(16, 9))
+                .setActions(acciones);
+        if (Build.VERSION.SDK_INT >= 31) b.setAutoEnterEnabled(true).setSeamlessResizeEnabled(false);
+        return b.build();
+    }
+
+    /** Actualiza el botón Pausa/Reanudar de la ventana flotante y el auto-ingreso (Android 12+). */
+    @SuppressLint("NewApi")
+    private void actualizarPip() {
+        if (!pipDisponible()) return;
+        try { setPictureInPictureParams(parametrosPip()); } catch (Exception ignored) { }
+    }
+
+    /** Entra a la ventana flotante. Devuelve false si no se pudo (equipo sin soporte o permiso apagado). */
+    @SuppressLint("NewApi")
+    private boolean entrarPip() {
+        if (!pipDisponible() || enPip) return enPip;
+        try { return enterPictureInPictureMode(parametrosPip()); } catch (Exception e) { return false; }
+    }
+
+    @Override
+    protected void onUserLeaveHint() {
+        super.onUserLeaveHint();
+        // Inicio / cambiar de app: en Android 12+ entra solo; en 8–11 lo pedimos aquí
+        if (Build.VERSION.SDK_INT < 31) entrarPip();
+    }
+
+    @Override
+    public void onPictureInPictureModeChanged(boolean isInPip, Configuration newConfig) {
+        super.onPictureInPictureModeChanged(isInPip, newConfig);
+        enPip = isInPip;
+        if (isInPip && intro != null) {
+            WebView v = intro; intro = null; root.removeView(v); v.destroy();
+        }
+        if (web != null) web.evaluateJavascript(PIP_JS + "(" + isInPip + ")", null);
+        if (!isInPip) {
+            // Si al salir de la ventana flotante la app quedó detenida, la cerraron con la X
+            if (detenido && pantallaEncendida()) { finish(); return; }
+            hideSystemUi();
         }
     }
 
@@ -118,11 +247,17 @@ public class MainActivity extends Activity {
                 || pm.hasSystemFeature("android.hardware.type.television");
     }
 
-    private void iniciarServicio() {
+    /** Inicia o actualiza la notificación de reproducción (solo celular). */
+    private void actualizarServicio() {
+        if (esTV) return;
+        Intent s = new Intent(this, PlaybackService.class).putExtra(PlaybackService.EXTRA_PAUSADO, pausado);
         try {
-            Intent s = new Intent(this, PlaybackService.class);
-            if (Build.VERSION.SDK_INT >= 26) startForegroundService(s); else startService(s);
-        } catch (Exception ignored) { }
+            if (!servicioIniciado && Build.VERSION.SDK_INT >= 26) startForegroundService(s);
+            else startService(s);
+            servicioIniciado = true;
+        } catch (Exception e) {
+            try { if (Build.VERSION.SDK_INT >= 26) startForegroundService(s); } catch (Exception ignored) { }
+        }
     }
 
     private void detenerServicio() {
@@ -179,8 +314,15 @@ public class MainActivity extends Activity {
         web.setWebViewClient(new WebViewClient() {
             @Override
             public void onPageFinished(WebView view, String url) {
+                if (!esTV) view.evaluateJavascript(VISIBLE_JS, null);
                 view.evaluateJavascript(WATCHDOG_JS, null);
+                if (pausado) view.evaluateJavascript("window.__setPaused&&window.__setPaused(true)", null);
                 handler.postDelayed(() -> { if (web != null) web.evaluateJavascript(WATCHDOG_JS, null); }, 4000);
+            }
+
+            @Override
+            public void onPageStarted(WebView view, String url, android.graphics.Bitmap favicon) {
+                if (!esTV) view.evaluateJavascript(VISIBLE_JS, null);
             }
 
             @Override
@@ -215,6 +357,7 @@ public class MainActivity extends Activity {
     private void loadPlayer() {
         cargado = true;
         String html = readAsset("player.html");
+        if (!esTV) html = html.replace("<head>", "<head><script>" + VISIBLE_JS + "</script>");
         web.loadDataWithBaseURL(BASE_URL, html, "text/html", "UTF-8", null);
     }
 
@@ -245,7 +388,7 @@ public class MainActivity extends Activity {
                 case KeyEvent.KEYCODE_MEDIA_PLAY:
                 case KeyEvent.KEYCODE_MEDIA_PAUSE:
                     if (intro != null) { ocultarIntro(); return true; }
-                    web.evaluateJavascript("window.__toggle&&window.__toggle()", null);
+                    setPausado(!pausado);
                     return true;
                 case KeyEvent.KEYCODE_MENU:
                 case KeyEvent.KEYCODE_CHANNEL_UP:
@@ -255,6 +398,7 @@ public class MainActivity extends Activity {
                 case KeyEvent.KEYCODE_BACK:
                     if (intro != null) { ocultarIntro(); return true; }
                     if (customView != null) { exitCustomView(); return true; }
+                    if (entrarPip()) return true; // celular: Atrás = ventana flotante
                     break;
             }
         }
@@ -270,14 +414,17 @@ public class MainActivity extends Activity {
     @Override
     protected void onStart() {
         super.onStart();
+        detenido = false;
         if (web == null) return;
         web.onResume();
         if (!cargado) loadPlayer();
+        if (!esTV && !isFinishing()) actualizarServicio();
     }
 
     @Override
     protected void onStop() {
         super.onStop();
+        detenido = true;
         if (web == null) return;
         if (esTV || isFinishing()) {
             // TV: al salir se corta la señal
@@ -286,7 +433,17 @@ public class MainActivity extends Activity {
             web.onPause();
             cargado = false;
         }
-        // Celular: sigue sonando en segundo plano (el servicio mantiene la app viva)
+        else if (enPip && pantallaEncendida()) {
+            // Cerraron la ventana flotante con la X: se detiene todo
+            finish();
+        }
+        // Celular: sigue sonando (pantalla bloqueada o sin ventana flotante); refresca la notificación
+        else actualizarServicio();
+    }
+
+    private boolean pantallaEncendida() {
+        PowerManager pm = (PowerManager) getSystemService(POWER_SERVICE);
+        return pm == null || pm.isInteractive();
     }
 
     @Override
@@ -298,7 +455,10 @@ public class MainActivity extends Activity {
     @Override
     protected void onDestroy() {
         handler.removeCallbacksAndMessages(null);
-        if (!esTV) detenerServicio();
+        if (!esTV) {
+            try { unregisterReceiver(controles); } catch (Exception ignored) { }
+            detenerServicio();
+        }
         if (intro != null) { intro.destroy(); intro = null; }
         if (web != null) { web.destroy(); web = null; }
         super.onDestroy();
