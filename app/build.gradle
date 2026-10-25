@@ -10,8 +10,8 @@ android {
         applicationId 'cl.canaltv.app'
         minSdk 21
         targetSdk 34
-        versionCode 5
-        versionName '1.4'
+        versionCode 6
+        versionName '1.5'
     }
 
     signingConfigs {
@@ -40,4 +40,13 @@ android {
         sourceCompatibility JavaVersion.VERSION_1_8
         targetCompatibility JavaVersion.VERSION_1_8
     }
+}
+
+dependencies {
+    // Evita choques de versiones de Kotlin entre bibliotecas
+    implementation platform('org.jetbrains.kotlin:kotlin-bom:1.8.22')
+    implementation 'androidx.appcompat:appcompat:1.6.1'
+    implementation 'androidx.mediarouter:mediarouter:1.6.0'
+    // Chromecast
+    implementation 'com.google.android.gms:play-services-cast-framework:21.4.0'
 }

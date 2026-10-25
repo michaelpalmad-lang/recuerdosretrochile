@@ -28,6 +28,7 @@ import android.webkit.JavascriptInterface;
 import android.webkit.WebChromeClient;
 import android.webkit.WebResourceError;
 import android.webkit.WebResourceRequest;
+import android.webkit.WebResourceResponse;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
@@ -37,7 +38,9 @@ import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
 import java.util.ArrayList;
 
-public class MainActivity extends Activity {
+import androidx.appcompat.app.AppCompatActivity;
+
+public class MainActivity extends AppCompatActivity implements CastHelper.Listener {
 
     public static final String EXTRA_SALIR = "salir";
 
@@ -57,6 +60,8 @@ public class MainActivity extends Activity {
     private boolean servicioIniciado = false;
     private boolean enPip = false;
     private boolean detenido = false;
+    private CastHelper cast;       // Chromecast (solo celular)
+    private boolean transmitiendo = false;
 
     /** Recibe Pausar/Reanudar y Cerrar desde la notificación y la pantalla de bloqueo. */
     private final BroadcastReceiver controles = new BroadcastReceiver() {
@@ -154,6 +159,10 @@ public class MainActivity extends Activity {
         setContentView(root);
 
         configureWebView();
+        if (!esTV) {
+            cast = new CastHelper(this, root, this);
+            if (!cast.iniciar()) cast = null;
+        }
         mostrarIntro();
         hideSystemUi();
 
@@ -180,6 +189,24 @@ public class MainActivity extends Activity {
         actualizarPip();
     }
 
+    // ---------- Chromecast ----------
+
+    @Override
+    public void onCastStart() {
+        transmitiendo = true;
+        setPausado(true);          // el teléfono se silencia; suena el TV
+        detenerServicio();         // la notificación la maneja Chromecast
+        servicioIniciado = false;
+        actualizarPip();
+    }
+
+    @Override
+    public void onCastEnd() {
+        transmitiendo = false;
+        setPausado(false);         // vuelve a sonar en el teléfono
+        actualizarPip();
+    }
+
     // ---------- Ventana flotante (Picture-in-Picture), solo celular ----------
 
     private boolean pipDisponible() {
@@ -199,7 +226,7 @@ public class MainActivity extends Activity {
         PictureInPictureParams.Builder b = new PictureInPictureParams.Builder()
                 .setAspectRatio(new Rational(16, 9))
                 .setActions(acciones);
-        if (Build.VERSION.SDK_INT >= 31) b.setAutoEnterEnabled(true).setSeamlessResizeEnabled(false);
+        if (Build.VERSION.SDK_INT >= 31) b.setAutoEnterEnabled(!transmitiendo).setSeamlessResizeEnabled(false);
         return b.build();
     }
 
@@ -213,7 +240,8 @@ public class MainActivity extends Activity {
     /** Entra a la ventana flotante. Devuelve false si no se pudo (equipo sin soporte o permiso apagado). */
     @SuppressLint("NewApi")
     private boolean entrarPip() {
-        if (!pipDisponible() || enPip) return enPip;
+        if (!pipDisponible() || transmitiendo) return false;
+        if (enPip) return true;
         try { return enterPictureInPictureMode(parametrosPip()); } catch (Exception e) { return false; }
     }
 
@@ -228,6 +256,7 @@ public class MainActivity extends Activity {
     public void onPictureInPictureModeChanged(boolean isInPip, Configuration newConfig) {
         super.onPictureInPictureModeChanged(isInPip, newConfig);
         enPip = isInPip;
+        if (cast != null) cast.setBotonPermitido(!isInPip);
         if (isInPip && intro != null) {
             WebView v = intro; intro = null; root.removeView(v); v.destroy();
         }
@@ -249,7 +278,7 @@ public class MainActivity extends Activity {
 
     /** Inicia o actualiza la notificación de reproducción (solo celular). */
     private void actualizarServicio() {
-        if (esTV) return;
+        if (esTV || transmitiendo) return;
         Intent s = new Intent(this, PlaybackService.class).putExtra(PlaybackService.EXTRA_PAUSADO, pausado);
         try {
             if (!servicioIniciado && Build.VERSION.SDK_INT >= 26) startForegroundService(s);
@@ -323,6 +352,16 @@ public class MainActivity extends Activity {
             @Override
             public void onPageStarted(WebView view, String url, android.graphics.Bitmap favicon) {
                 if (!esTV) view.evaluateJavascript(VISIBLE_JS, null);
+            }
+
+            @Override
+            public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest req) {
+                // Solo observa: si el reproductor pide un .m3u8, ese es el enlace para Chromecast
+                final String u = req.getUrl().toString();
+                if (cast != null && u.toLowerCase().contains(".m3u8")) {
+                    handler.post(() -> { if (cast != null) cast.enlaceDetectado(u); });
+                }
+                return null;
             }
 
             @Override
@@ -455,6 +494,7 @@ public class MainActivity extends Activity {
     @Override
     protected void onDestroy() {
         handler.removeCallbacksAndMessages(null);
+        if (cast != null) { cast.liberar(); cast = null; }
         if (!esTV) {
             try { unregisterReceiver(controles); } catch (Exception ignored) { }
             detenerServicio();
