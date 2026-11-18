@@ -2,6 +2,9 @@ plugins {
     id 'com.android.application'
 }
 
+// Número de compilación que entrega GitHub Actions (1, 2, 3…)
+def compilacion = (System.getenv('GITHUB_RUN_NUMBER') ?: '0').toInteger()
+
 android {
     namespace 'cl.canaltv.app'
     compileSdk 34
@@ -10,8 +13,9 @@ android {
         applicationId 'cl.canaltv.app'
         minSdk 21
         targetSdk 34
-        versionCode 6
-        versionName '1.5'
+        // Número automático: cada compilación de GitHub sube la versión sola
+        versionCode 100 + compilacion
+        versionName '1.' + compilacion
     }
 
     signingConfigs {

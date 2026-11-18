@@ -60,6 +60,7 @@ public class MainActivity extends AppCompatActivity implements CastHelper.Listen
     private boolean servicioIniciado = false;
     private boolean enPip = false;
     private boolean detenido = false;
+    private UpdateHelper actualizador;
     private CastHelper cast;       // Chromecast (solo celular)
     private boolean transmitiendo = false;
 
@@ -164,6 +165,9 @@ public class MainActivity extends AppCompatActivity implements CastHelper.Listen
             if (!cast.iniciar()) cast = null;
         }
         mostrarIntro();
+        // Revisa actualizaciones cuando termina la intro
+        actualizador = new UpdateHelper(this);
+        handler.postDelayed(() -> { if (!enPip && !isFinishing()) actualizador.revisar(); }, 6000);
         hideSystemUi();
 
         if (!esTV) {
@@ -448,6 +452,12 @@ public class MainActivity extends AppCompatActivity implements CastHelper.Listen
     protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
         if (intent.getBooleanExtra(EXTRA_SALIR, false)) finish();
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        if (actualizador != null) actualizador.alVolver(); // vuelve de activar el permiso de instalación
     }
 
     @Override
